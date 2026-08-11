@@ -1,0 +1,65 @@
+{
+  "name": "floater-cheat",
+  "productName": "Floater",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Floating desktop overlay that stays invisible to screen capture, screen sharing and recording.",
+  "author": "dhruvvv0913",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "node scripts/start.js",
+    "dev": "node scripts/start.js --dev",
+    "test": "node test/run.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "appId": "dev.local.floater",
+    "productName": "Floater",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Floater"
+    },
+    "portable": {
+      "artifactName": "Floater-portable-${version}.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@google/genai": "^2.16.0",
+    "openai": "^7.4.0"
+  }
+}
