@@ -4,6 +4,7 @@ const config = require('./config');
 const secrets = require('./secrets');
 const usage = require('./usage');
 const log = require('./logger');
+const documents = require('./documents');
 const anthropicProvider = require('./providers/anthropic');
 const ollamaProvider = require('./providers/ollama');
 const openaiProvider = require('./providers/openai');
@@ -145,6 +146,17 @@ function budgetBlocked() {
   };
 }
 
+/**
+ * Prepend the attached reference document, if any, to a base system prompt.
+ * The document goes FIRST so the task instructions stay closest to the
+ * question — a long document sandwiched between the rules and the query
+ * pushes the rules out of the model's immediate attention.
+ */
+function withDocument(basePrompt) {
+  const block = documents.promptBlock();
+  return block ? `${block}\n\n${basePrompt}` : basePrompt;
+}
+
 function missingKeyResult() {
   return { ok: false, error: 'No API key. Open Settings from the tray, or set ANTHROPIC_API_KEY.' };
 }
@@ -177,7 +189,7 @@ async function askTerse({ image = null, text = '', effortOverride = null } = {})
     model: settings.model,
     maxTokens: settings.maxTokens,
     effort: effortOverride || settings.effort,
-    system: TERSE_PROMPT,
+    system: withDocument(TERSE_PROMPT),
     content: buildUserContent(prompt, image),
     jsonSchema: TERSE_SCHEMA,
     timeoutMs: settings.timeoutMs,
@@ -250,7 +262,7 @@ async function askChat(question, image, onDelta) {
     model: settings.model,
     maxTokens: settings.maxTokens,
     effort: settings.effort,
-    system: CHAT_PROMPT,
+    system: withDocument(CHAT_PROMPT),
     messages: historyForRequest(),
     onDelta: (delta) => {
       if (!firstTokenAt) firstTokenAt = Date.now();

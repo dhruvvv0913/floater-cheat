@@ -39,6 +39,7 @@ question, so hovering away and back shows the same text. It is never cleared by 
 | Select region | `Ctrl+Shift+R` | Drag a box; every capture crops to it |
 | Clear region | `Ctrl+Shift+F` | Back to whole-screen capture |
 | Clear everything | `Ctrl+Shift+Backspace` | Wipes all answers + conversation from memory |
+| Peek | `Ctrl+Shift+S` | Reveal briefly without hovering; auto-hides after a few seconds (tap again to dismiss early) |
 | Keep visible (pin) | `Ctrl+Shift+\` | Stays up without hovering — for reading a long answer |
 | Toggle stealth | `Ctrl+Shift+P` | Turn capture-exclusion off when you *want* to share it |
 | Self-test | `Ctrl+Shift+T` | Verifies invisibility for real |
@@ -94,6 +95,38 @@ The display **under your cursor**, not the one the panel is on. On a two-monitor
 routinely different, and capturing the panel's display silently answers about the wrong screen — a
 failure that looks identical to a correct answer. Configurable to `panel` or `primary` in
 `config.json`.
+
+### Reference document context
+
+**tray → Attach document…** (or the button in Settings) attaches a PDF or plain-text file whose
+contents are prepended to every question's system prompt, so answers are grounded in *your* material —
+course notes, a spec, a textbook chapter — instead of the model's general knowledge. When your source
+and the model disagree, it's told to prefer your source and to say so when the answer isn't in it
+rather than inventing one.
+
+Details worth knowing:
+
+- **The extracted text is cached, not re-read per question.** Re-parsing a PDF on every keypress would
+  wreck the latency budget for a file that never changes. The path is remembered too, only so the UI
+  can show which file it came from and flag it if you've since edited it (**"file changed — re-attach"**).
+- **It's truncated hard** — first ~40k characters (~10k tokens). This ships on *every* request, so an
+  un-truncated 200-page PDF would cost a fortune per question and blow the context window. For a
+  specific page, a region-cropped screenshot beats a giant attached document.
+- **Scanned PDFs have no extractable text** — you'll get told to use region capture on those instead.
+- **This is the one piece of user content the app persists to disk in plain text** (`config.json`).
+  Screenshots and answers never touch disk. Settings says so, and *Remove* deletes it. If that matters
+  to you, don't attach anything sensitive.
+
+### Peek — reveal without committing
+
+`Ctrl+Shift+S` reveals the panel for a few seconds without hovering or pinning, then hides it again —
+handy when your hand's on the keyboard, not the mouse. If your cursor reaches the panel before the
+timer expires, hover takes over and it stays; tap the key again to dismiss early.
+
+Honest caveat: this is a **tap**, not a true press-and-hold. Electron's global-hotkey API has no
+key-*up* event, so "visible only while the key is physically down" isn't possible without bolting on a
+native keyboard hook — real ongoing maintenance weight this project deliberately doesn't carry. The
+auto-hide timeout is the pragmatic stand-in (`peek.durationMs` in `config.json`, default 4000ms).
 
 ## AI providers
 
@@ -201,10 +234,15 @@ drives the **real** `ai`, `usage`, `capture`, `config`, `secrets`, `hotkeys`/`sh
 - refusal/safety-block handling and error mapping, for every provider — including the shared status-code classifier itself, unit-tested directly (`provider-errors.js`)
 - shortcut conflict / invalid / OS-unavailable detection, distinguished correctly
 - key validation, the per-provider key-storage migration path, and the DPI-scaling capture math
+- the peek reveal state machine (tap → reveal, second tap → dismiss, auto-hide timeout, and that
+  pin/hover correctly outrank a peek's expiry)
+- document attach / truncation-at-cap / rejection of unsupported and empty files / stale-file
+  detection, and that an attached document's text actually reaches the request's system prompt (and
+  is gone again after *Remove*)
 - that the Markdown renderer builds DOM nodes and **never** produces an `innerHTML` string (the
   CSP-safety guarantee for untrusted model output)
 
-147 assertions, no key or network needed.
+173 assertions, no key or network needed.
 
 What it does **not** cover, because nothing headless can: the actual model's answers, a real network
 round-trip to any provider, whether Ollama is actually installed and reachable, the hover feel, and
@@ -280,6 +318,7 @@ src/
     selftest.js        two-phase capture verification
     capture.js         screenshot grab, region crop, downscale, JPEG, hash
     region-select.js   full-screen picker for the crop rectangle
+    documents.js       attach a PDF/text file as reference context (cached, truncated)
     secrets.js         one encrypted key file per provider (OS keystore via safeStorage)
     ai.js              provider-agnostic core — prompts, history, cost, provider registry
     usage.js           token/cost accounting with a pricing table (ollama always $0)

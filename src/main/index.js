@@ -24,7 +24,7 @@ if (!process.type && process.env.ELECTRON_RUN_AS_NODE) {
 }
 
 const os = require('os');
-const { app, ipcMain, Tray, Menu, nativeImage, shell, screen, clipboard } = require('electron');
+const { app, ipcMain, Tray, Menu, nativeImage, shell, screen, clipboard, dialog } = require('electron');
 
 const config = require('./config');
 const log = require('./logger');
@@ -33,6 +33,7 @@ const hotkeys = require('./hotkeys');
 const selftest = require('./selftest');
 const capture = require('./capture');
 const region = require('./region-select');
+const documents = require('./documents');
 const secrets = require('./secrets');
 const usage = require('./usage');
 const ai = require('./ai');
@@ -134,6 +135,7 @@ function registerHotkeys() {
       overlay.togglePin();
       updateTray();
     },
+    peek: () => overlay.startPeek(),
     copyAnswer: () => copyAnswer(),
     previousAnswer: () => showAnswer(-1),
     nextAnswer: () => showAnswer(1),
@@ -176,6 +178,7 @@ function updateTray() {
   const keys = config.get('hotkeys');
   const failed = hotkeys.getFailures();
   const rect = region.current();
+  const doc = documents.describe();
 
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -205,6 +208,15 @@ function updateTray() {
         : []),
       { type: 'separator' },
       {
+        label: doc
+          ? `Document: ${doc.name}${doc.truncated ? ' (truncated)' : ''}${doc.stale ? ' — file changed' : ''}`
+          : 'No reference document',
+        enabled: false,
+      },
+      { label: 'Attach document…', click: () => pickDocument() },
+      ...(doc ? [{ label: 'Remove document', click: () => clearDocument() }] : []),
+      { type: 'separator' },
+      {
         label: 'Keep visible (pin)',
         type: 'checkbox',
         checked: state.pinned,
@@ -214,6 +226,7 @@ function updateTray() {
           updateTray();
         },
       },
+      { label: 'Peek briefly', accelerator: keys.peek, click: () => overlay.startPeek() },
       {
         label: 'Move to corner',
         submenu: ['Top left', 'Top right', 'Bottom right', 'Bottom left'].map((label, index) => ({
@@ -275,6 +288,47 @@ async function pickRegion() {
   const rect = await region.open();
   if (rect) send('toast', `Region set — ${rect.width}x${rect.height}`);
   updateTray();
+}
+
+/* -------------------------------------------------------------- documents */
+
+async function pickDocument() {
+  // Pin the panel for the duration: the OS file dialog takes focus, which
+  // moves the cursor off the panel and would otherwise hide Settings behind
+  // the user's back while they browse.
+  const wasPinned = overlay.getState().pinned;
+  overlay.setPinned(true);
+  try {
+    const result = await dialog.showOpenDialog({
+      title: 'Attach a reference document',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Documents', extensions: ['pdf', 'txt', 'md', 'markdown', 'text', 'csv', 'json'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePaths.length) return null;
+
+    send('toast', 'Reading document…'); // a large PDF takes a noticeable moment
+    const attached = await documents.attach(result.filePaths[0]);
+    if (!attached.ok) {
+      send('toast', attached.error);
+      return attached;
+    }
+    send('toast', `Attached ${attached.document.name}`);
+    updateTray();
+    return attached;
+  } finally {
+    // Restore whatever pin state the user actually had.
+    if (!wasPinned) overlay.setPinned(false);
+  }
+}
+
+function clearDocument() {
+  documents.clear();
+  send('toast', 'Document removed');
+  updateTray();
+  return true;
 }
 
 /* -------------------------------------------------------------- self-test */
@@ -498,6 +552,8 @@ function registerIpc() {
 
   /* --- self-test / region --- */
   ipcMain.handle('overlay:run-selftest', () => runSelfTest());
+  ipcMain.handle('document:pick', () => pickDocument());
+  ipcMain.handle('document:clear', () => clearDocument());
   ipcMain.handle('region:pick', () => pickRegion());
   ipcMain.handle('region:clear', () => {
     region.clear();
@@ -532,6 +588,7 @@ function registerIpc() {
       keyEnvVar: secrets.envVarFor(activeId),
       needsKey: ai.activeProviderNeedsKey(),
       usage: usage.snapshot(),
+      document: documents.describe(), // metadata only — never the extracted text
       display: {
         opacity: config.get('opacity'),
         fontScale: config.get('fontScale'),

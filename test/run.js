@@ -289,6 +289,97 @@ async function main() {
   fakeElectron.globalShortcut._externallyOwned.clear();
   config.set('hotkeys', savedHotkeys); // restore for any later section
 
+  console.log('overlay-window — peek reveal state machine');
+  {
+    // overlay-window is exercised WITHOUT calling create(): every window call
+    // inside applyReveal early-returns when `win` is null, but the reveal
+    // state itself still transitions — which is the actual logic under test.
+    // A real BrowserWindow would only add mocking surface, not coverage.
+    const overlay = require('../src/main/overlay-window');
+    const savedPeek = { ...config.get('peek') };
+    config.set('peek', { ...savedPeek, durationMs: 60 });
+
+    check('panel is not revealed at rest', overlay.getState().revealed === false);
+
+    overlay.startPeek();
+    check('startPeek reveals the panel', overlay.getState().revealed === true && overlay.getState().peeking === true);
+
+    overlay.startPeek(); // second tap
+    check('a second tap dismisses the peek early (toggle, not extend)', overlay.getState().peeking === false);
+
+    overlay.startPeek();
+    await new Promise((r) => setTimeout(r, 110));
+    check('a peek auto-hides after peek.durationMs', overlay.getState().peeking === false);
+
+    // The handoff that makes tap-to-peek feel seamless: if the cursor arrives
+    // before the timer fires, hover keeps it open past the timeout.
+    overlay.startPeek();
+    overlay.getState(); // (no-op read; hovered is set by the cursor poll in real use)
+    const stateDuringPeek = overlay.getState();
+    check('peeking alone is enough to count as revealed', stateDuringPeek.revealed === true);
+    overlay.stopPeek();
+    check('stopPeek clears the peek immediately', overlay.getState().peeking === false && overlay.getState().revealed === false);
+
+    // Peek must not fight the other reveal flags — pinned outranks a timeout.
+    overlay.setPinned(true);
+    overlay.startPeek();
+    await new Promise((r) => setTimeout(r, 110));
+    check('a pinned panel stays revealed after the peek timer expires', overlay.getState().revealed === true);
+    overlay.setPinned(false);
+    check('unpinning after the peek expired hides it', overlay.getState().revealed === false);
+
+    config.set('peek', savedPeek);
+  }
+
+  console.log('documents — attach / truncate / promptBlock / clear / stale');
+  {
+    const documents = require('../src/main/documents');
+    documents.clear();
+    check('describe() is null with nothing attached', documents.describe() === null);
+    check('promptBlock() is empty with nothing attached', documents.promptBlock() === '');
+
+    // Plain-text attach (no pdf-parse needed — PDF extraction is covered by a
+    // separate real-file smoke test; the harness stays fast and offline).
+    const txtPath = path.join(USERDATA, 'notes.txt');
+    fs.writeFileSync(txtPath, 'Ohm law: V = I R.\n\n\n\nThe mitochondria is the powerhouse of the cell.');
+    const attached = await documents.attach(txtPath);
+    check('attach() ok on a readable text file', attached.ok, attached.error);
+    const meta = documents.describe();
+    check('describe() returns the filename', meta && meta.name === 'notes.txt');
+    check('describe() never leaks the extracted text', meta && !('text' in meta));
+    check('runs of blank lines from layout are collapsed', documents.current().text.includes('V = I R.\n\nThe mitochondria'));
+    check('promptBlock() wraps the text in BEGIN/END markers', /BEGIN DOCUMENT[\s\S]*mitochondria[\s\S]*END DOCUMENT/.test(documents.promptBlock()));
+    check('not flagged truncated when under the cap', meta.truncated === false);
+
+    // Truncation
+    const bigPath = path.join(USERDATA, 'big.txt');
+    fs.writeFileSync(bigPath, 'x'.repeat(documents.MAX_CHARS + 5000));
+    await documents.attach(bigPath);
+    check('a file over MAX_CHARS is truncated to exactly the cap', documents.current().text.length === documents.MAX_CHARS);
+    check('truncated flag is set', documents.describe().truncated === true);
+
+    // Rejections
+    const badExt = path.join(USERDATA, 'thing.exe');
+    fs.writeFileSync(badExt, 'binary');
+    const rejected = await documents.attach(badExt);
+    check('unsupported extension is rejected', !rejected.ok && /unsupported/i.test(rejected.error), rejected.error);
+    const emptyPath = path.join(USERDATA, 'empty.txt');
+    fs.writeFileSync(emptyPath, '   \n  ');
+    const emptyRes = await documents.attach(emptyPath);
+    check('an empty/whitespace-only file is rejected', !emptyRes.ok && /empty/i.test(emptyRes.error), emptyRes.error);
+
+    // Stale detection: re-attach the small file, then touch it in the future.
+    await documents.attach(txtPath);
+    check('a freshly attached file is not stale', documents.describe().stale === false);
+    const future = Date.now() / 1000 + 3600;
+    fs.utimesSync(txtPath, future, future);
+    check('a file edited after attaching is reported stale', documents.describe().stale === true);
+
+    // Clear
+    documents.clear();
+    check('clear() detaches (describe null, promptBlock empty)', documents.describe() === null && documents.promptBlock() === '');
+  }
+
   console.log('config');
   check('defaults load with nested keys', config.get('hover').pollMs === 60);
   check('MODEL_CATALOG exported per provider', Array.isArray(config.MODEL_CATALOG.anthropic) && config.MODEL_CATALOG.anthropic.includes('claude-opus-5'));
@@ -377,6 +468,24 @@ async function main() {
   check('terse parsed the answer', terse.answer === 'B — 4.18 kJ/kg·K');
   check('terse parsed confidence', terse.confidence === 'high');
   check('terse computed a positive cost', terse.costUsd > 0, `${terse.costUsd}`);
+
+  console.log('ai — attached document reaches the system prompt');
+  {
+    const documents = require('../src/main/documents');
+    const docPath = path.join(USERDATA, 'ref.txt');
+    fs.writeFileSync(docPath, 'SECRET-MARKER-42 is the answer to everything in this course.');
+    await documents.attach(docPath);
+    mock.create = async () => ({
+      content: [{ type: 'text', text: JSON.stringify({ question: 'q', answer: 'a', confidence: 'high' }) }],
+      stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 2 }, model: 'claude-opus-5',
+    });
+    await ai.askTerse({ image: { mediaType: 'image/jpeg', base64: 'AA' } });
+    check('the document text is prepended into request.system', mock.lastRequest.system.includes('SECRET-MARKER-42'), mock.lastRequest.system.slice(0, 80));
+    check('the base terse instructions still follow the document', /BEGIN DOCUMENT[\s\S]*END DOCUMENT[\s\S]*screenshot/i.test(mock.lastRequest.system));
+    documents.clear();
+    await ai.askTerse({ image: { mediaType: 'image/jpeg', base64: 'AA' } });
+    check('after clearing, the document no longer appears in request.system', !mock.lastRequest.system.includes('SECRET-MARKER-42'));
+  }
 
   console.log('ai — refusal handling');
   mock.create = async () => ({ content: [], stop_reason: 'refusal', stop_details: { category: 'cyber' }, usage: {}, model: 'claude-opus-5' });

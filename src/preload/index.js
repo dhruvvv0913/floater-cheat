@@ -42,6 +42,10 @@ contextBridge.exposeInMainWorld('overlay', {
   pickRegion: () => ipcRenderer.invoke('region:pick'),
   clearRegion: () => ipcRenderer.invoke('region:clear'),
 
+  /* ---- document ---- */
+  pickDocument: () => ipcRenderer.invoke('document:pick'),
+  clearDocument: () => ipcRenderer.invoke('document:clear'),
+
   /* ---- self-test ---- */
   runSelfTest: () => ipcRenderer.invoke('overlay:run-selftest'),
   // Sent back once the marker has actually painted, so the test captures a real

@@ -247,6 +247,52 @@ export default {
         )
       );
 
+      /* --- reference document --- */
+      const doc = settings.document;
+      const docRow = document.createElement('div');
+      docRow.className = 'controls';
+
+      const attach = document.createElement('button');
+      attach.textContent = doc ? 'Replace document' : 'Attach document';
+      attach.addEventListener('click', async () => {
+        await api.pickDocument();
+        renderKey();
+      });
+      docRow.append(attach);
+
+      if (doc) {
+        const removeDoc = document.createElement('button');
+        removeDoc.textContent = 'Remove';
+        removeDoc.addEventListener('click', async () => {
+          await api.clearDocument();
+          renderKey();
+        });
+        docRow.append(removeDoc);
+      }
+
+      keySection.append(
+        row(
+          'Document',
+          doc
+            ? `${doc.name} · ${(doc.chars / 1000).toFixed(0)}k chars${doc.truncated ? ' (truncated)' : ''}`
+            : 'none',
+          doc?.stale ? 'bad' : null
+        ),
+        docRow
+      );
+      if (doc?.stale) {
+        keySection.append(
+          note('This file was edited after you attached it — re-attach to use the current version.', 'bad')
+        );
+      }
+      keySection.append(
+        note(
+          'Grounds answers in your own material (notes, a spec, a chapter) instead of general knowledge. ' +
+            'PDF or plain text; scanned PDFs have no extractable text — use region capture on those instead. ' +
+            'This is the one thing stored in plain text on disk (config.json); Remove deletes it.'
+        )
+      );
+
       /* --- spend --- */
       const money = document.createElement('div');
       money.className = 'section';
@@ -449,6 +495,7 @@ export default {
       selectRegion: 'Select region',
       clearRegion: 'Clear region',
       panic: 'Clear everything',
+      peek: 'Peek briefly',
       togglePin: 'Keep visible (pin)',
       toggleProtection: 'Toggle stealth',
       selfTest: 'Self-test',

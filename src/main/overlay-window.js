@@ -8,12 +8,17 @@ const config = require('./config');
  * The overlay window and everything that makes it "stealthy".
  *
  * Visibility model: the panel is invisible by default and reveals itself when
- * the cursor is inside its bounds. Four things can hold it open —
+ * the cursor is inside its bounds. Five things can hold it open —
  *
  *   hovered   cursor is within the window bounds (polled, see watchCursor)
  *   pinned    user pressed the pin hotkey to read without holding the mouse
  *   dragging  a move is in progress; the cursor can outrun the window
  *   inputOpen the text box is up, so hiding mid-sentence would be maddening
+ *   peeking   tapped the peek hotkey; times out unless hover takes over first
+ *             (see startPeek — this is a deliberate approximation of "hold to
+ *             show": Electron's global-hotkey API has no key-up event, so a
+ *             real press-and-release-to-hide isn't available without adding a
+ *             native keyboard hook)
  *
  * Revealing is a CSS class in the renderer, never win.hide(): on Windows,
  * setContentProtection has a long history of silently dropping after a
@@ -24,6 +29,7 @@ let win = null;
 let saveTimer = null;
 let hideTimer = null;
 let cursorTimer = null;
+let peekTimer = null;
 let lastApplied = null;
 
 const state = {
@@ -32,11 +38,12 @@ const state = {
   pinned: false,
   dragging: false,
   inputOpen: false,
+  peeking: false,
   mode: 'answer', // 'answer' | 'settings'
 };
 
 const isRevealed = () =>
-  state.pinned || state.hovered || state.dragging || state.inputOpen;
+  state.pinned || state.hovered || state.dragging || state.inputOpen || state.peeking;
 
 function initialBounds() {
   const saved = config.get('bounds');
@@ -279,6 +286,36 @@ function setInputOpen(open) {
   if (opening && win && !win.isDestroyed()) win.focus();
 }
 
+/**
+ * Tap-to-peek: reveal briefly without hovering or pinning. A second tap while
+ * already peeking dismisses it early (toggle, not "extend the timer") — a
+ * global hotkey works regardless of window focus, so this is the reliable
+ * "make it go away now" path; the panel isn't focusable during a peek (same
+ * as normal click-through), so Esc can't reach it the way it can when the
+ * text box is open.
+ *
+ * If the cursor reaches the panel before the timer fires, `hovered` takes
+ * over on its own — isRevealed() already ORs every flag — so nothing special
+ * has to happen here for that handoff to feel seamless.
+ */
+function startPeek() {
+  if (state.peeking) return stopPeek();
+  clearTimeout(peekTimer);
+  state.peeking = true;
+  applyReveal();
+  peekTimer = setTimeout(() => {
+    state.peeking = false;
+    applyReveal();
+  }, config.get('peek').durationMs);
+}
+
+function stopPeek() {
+  clearTimeout(peekTimer);
+  if (!state.peeking) return;
+  state.peeking = false;
+  applyReveal();
+}
+
 function setMode(mode) {
   const settings = mode === 'settings';
   state.mode = mode;
@@ -398,6 +435,8 @@ module.exports = {
   togglePin,
   setDragging,
   setInputOpen,
+  startPeek,
+  stopPeek,
   setMode,
   setPanelBlanked,
   applyDisplaySettings,

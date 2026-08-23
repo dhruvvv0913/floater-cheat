@@ -43,6 +43,12 @@ const DEFAULTS = {
   moveStep: 40,
   autoSize: true,
 
+  peek: {
+    // How long a tap-to-peek stays open before auto-hiding, unless the
+    // cursor reaches the panel first (hover takes over from there).
+    durationMs: 4000,
+  },
+
   capture: {
     // 'cursor' is the only sane default on a multi-monitor setup: capturing the
     // panel's display instead silently answers about the wrong screen.
@@ -69,6 +75,10 @@ const DEFAULTS = {
     answerClipboard: 'Control+Shift+G',
     // Keeps the panel visible without hovering (for reading a long answer).
     togglePin: 'Control+Shift+\\',
+    // Tap-to-peek: briefly reveal without hovering or pinning. Second tap
+    // dismisses early. See overlay-window.js's startPeek for why this is a
+    // tap, not a true press-and-hold.
+    peek: 'Control+Shift+S',
     copyAnswer: 'Control+Shift+C',
     previousAnswer: 'Control+Shift+[',
     nextAnswer: 'Control+Shift+]',
@@ -123,6 +133,12 @@ const DEFAULTS = {
   // Answers kept in the ring buffer you can page back through.
   answerHistory: 8,
   startOnLogin: false,
+
+  // Reference document — see documents.js. NOTE: `text` is the one piece of
+  // user content this app persists to disk in plain form; screenshots and
+  // answers never are. Cached rather than re-parsed per question because
+  // re-reading a PDF on every keypress would blow the latency budget.
+  document: { path: null, name: null, text: '', chars: 0, truncated: false, attachedAt: null },
 };
 
 // Suggested models per provider, shown in Settings. Not every key here has a
